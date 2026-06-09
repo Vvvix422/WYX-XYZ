@@ -2023,6 +2023,30 @@
     }
 
     // ─── 计时器 ──────────────────────────────────────────────────────────────
+    // 用时间戳基准计时，避免后台/锁屏定时器被浏览器降频时倒计时停止
+    let _timerAnchorAt = 0;        // 启动/续接时刻
+    let _timerAnchorSeconds = 0;   // 启动时的 timerSeconds 值
+    let _visibilityHandler = null;
+
+    function recomputeTimerFromAnchor() {
+        if (!_timerAnchorAt) return;
+        const elapsed = Math.floor((Date.now() - _timerAnchorAt) / 1000);
+        if (isCountdown) {
+            const left = _timerAnchorSeconds - elapsed;
+            if (left <= 0) {
+                timerSeconds = 0;
+                updateTimerDisplay();
+                stopTimer();
+                onTimerEnd();
+                return true; // 时间到
+            }
+            timerSeconds = left;
+        } else {
+            timerSeconds = _timerAnchorSeconds + elapsed;
+        }
+        updateTimerDisplay();
+        return false;
+    }
 
     function startTimer() {
         clearInterval(timerInterval);
@@ -2034,26 +2058,32 @@
             // 倒计时 → 启动梦角提前离开检查
             scheduleEarlyLeaveCheck();
         }
+        // 记录基准点（基于真实时间戳，不依赖定时器累加）
+        _timerAnchorAt = Date.now();
+        _timerAnchorSeconds = timerSeconds;
+
         timerInterval = setInterval(() => {
-            if (isCountdown) {
-                timerSeconds--;
-                if (timerSeconds <= 0) {
-                    timerSeconds = 0;
-                    updateTimerDisplay();
-                    stopTimer();
-                    onTimerEnd();
-                    return;
-                }
-            } else {
-                timerSeconds++;
-            }
-            updateTimerDisplay();
+            recomputeTimerFromAnchor();
         }, 1000);
+
+        // 切回前台时立即重算一次（修复锁屏/后台时倒计时停止的问题）
+        if (!_visibilityHandler) {
+            _visibilityHandler = () => {
+                if (!document.hidden && timerInterval) recomputeTimerFromAnchor();
+            };
+            document.addEventListener('visibilitychange', _visibilityHandler);
+        }
     }
 
     function stopTimer() {
         clearInterval(timerInterval);
         timerInterval = null;
+        _timerAnchorAt = 0;
+        _timerAnchorSeconds = 0;
+        if (_visibilityHandler) {
+            document.removeEventListener('visibilitychange', _visibilityHandler);
+            _visibilityHandler = null;
+        }
     }
 
     function updateTimerDisplay() {
